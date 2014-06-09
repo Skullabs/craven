@@ -1,0 +1,9 @@
+[PROJECT]
+GROUP=ibratan.ttm
+VERSION=1.0-SNAPSHOT
+ARTIFACT=test
+
+[DEPS]
+#group      artifact      version
+ibratan.ttm libsample     1.0-SNAPSHOT
+

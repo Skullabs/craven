@@ -1,0 +1,81 @@
+#!/bin/bash
+
+# FUNCTIONS
+print(){
+	echo ":: $@" 1>&2
+}
+
+pass(){
+	echo > /dev/null
+}
+
+get_first_char(){
+        echo $1 | sed 's/\(.\).*/\1/'
+}
+
+abspath(){
+        if [ ! "`get_first_char $1`" = "/" ]; then
+                echo "`pwd`/$1"
+        else
+                echo $1
+        fi
+}
+
+car_extract_objects_from_dep(){
+	local file=`abspath ${1}`
+	if [ -e "$file" ]; then
+		cd ${OUTPUT_DIR}
+		ar x ${file}
+		cd - > /dev/null
+	else
+		print "Not found: $file. Skipping."
+	fi
+}
+
+car_copy_object_to_output_dir(){
+	local file="$1"
+	if [ -e "$file" ]; then
+		cp $1 $OUTPUT_DIR
+	else
+		print "Not found: $file. Skipping."
+	fi
+}
+
+car_create_library_from_objects(){
+	rm -f ${OUTPUT_FILE}
+	cd ${OUTPUT_DIR}
+	ar rcs "${OUTPUT_FILE}" *.o
+	cd - > /dev/null
+	print "Created ${OUTPUT_FILE}"
+}
+
+car_create_output_dir_if_not_exists(){
+	if [ ! -d "${OUTPUT_DIR}" ]; then
+		print "Creating ${OUTPUT_DIR}"
+		mkdir -p "${OUTPUT_DIR}"
+	fi
+}
+
+# VARIABLES
+OUTPUT_DIR=${OUTPUT_DIR:-output}/c-archive
+OUTPUT_FILE=`abspath $1`
+
+# PARAM CHECK
+if [ "$#" -lt "2" ]; then
+	print "Usage: ${0} <output.a> <input1.[ao]> ... <inputN.[ao]>"
+	exit 1
+fi
+
+# MAIN
+car_create_output_dir_if_not_exists
+
+for param in $@; do
+case $param in
+	$1) pass ;;
+	*.a) car_extract_objects_from_dep $param ;;
+	*.o) car_copy_object_to_output_dir $param ;;
+esac
+done
+
+car_create_library_from_objects
+

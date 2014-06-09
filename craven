@@ -1,0 +1,156 @@
+#!/bin/bash
+
+# FUNCTIONS
+
+# ----------------------------------------------------------------
+# commom methods
+# ----------------------------------------------------------------
+
+print(){
+	echo ":: $@" 1>&2
+}
+
+debug(){
+	if [ "$DEBUG" = "True" ]; then
+		print "DEBUG: $@"
+	fi
+}
+
+craven_assert_file_exists_or_exit(){
+	local file=$1
+	if [ ! -e "$file" ]; then
+		debug "File $file not found: exiting."
+		exit 0
+	fi
+}
+
+craven_create_dir_if_not_exists(){
+        if [ ! -d "${1}" ]; then
+                print "Creating ${1}"
+                mkdir -p "${1}"
+        fi
+}
+
+craven_read_section(){
+	craven_assert_file_exists_or_exit $PROJECT_FILE
+	sed "/^#/d;/\[${1}\]/,/^\s*$/"'!d;'"/\[${1}\]/d;/^\s*$/d" $PROJECT_FILE
+}
+
+craven_read_section_value(){
+	craven_read_section $1 | grep "$2" | cut -d '=' -f 2
+}
+
+# ----------------------------------------------------------------
+# methods for goal "deps" 
+# ----------------------------------------------------------------
+
+craven_copy_my_dependencies_to_outputdir(){
+	craven_create_dir_if_not_exists $OUTPUT_DIR
+	craven_create_dir_if_not_exists $DEPS_DIR
+	craven_read_section "DEPS" | while read line; do
+		craven_copy_to_output_dir $line
+	done
+}
+
+craven_copy_to_output_dir(){
+	local group=$1
+	local version=$3
+	local artifact=$2
+	local dir="$C2_REPO/${group}/${artifact}/${version}"
+	if [ ! -d "$dir" ]; then
+		print "Dependency not found: $dir"
+		exit 2
+	fi
+	cp $dir/*.* $DEPS_DIR/
+}
+
+# ----------------------------------------------------------------
+# goal: clean
+# ----------------------------------------------------------------
+craven_clean_env(){
+	rm -rf ${OUTPUT_DIR}
+}
+
+# ----------------------------------------------------------------
+# goal: build
+# ----------------------------------------------------------------
+
+craven_build_and_deploy(){
+	craven_create_dir_if_not_exists $OUTPUT_DIR
+	craven_create_dir_if_not_exists $DEPS_DIR
+	local group=`craven_read_section_value "PROJECT" "GROUP"`
+	local version=`craven_read_section_value "PROJECT" "VERSION"`
+	local artifact=`craven_read_section_value "PROJECT" "ARTIFACT"`
+	print "Building $group:$artifact:$version"
+	craven_create_deploy_dir $group $version
+	craven_build_lib $artifact
+	craven_build_headers
+	craven_deploy $group $artifact $version
+}
+
+craven_create_deploy_dir(){
+	local group=$1
+	local version=$2
+	local dir="$C2_REPO/${group}/${version}"
+	craven_create_dir_if_not_exists $dir
+}
+
+craven_build_lib(){
+	local artifact=$1
+	local static_objects=*.o
+	local dependencies=$DEPS_DIR/*.a
+	debug "Found static_objects: $static_objects"
+	debug "Found dependencies: $dependencies"
+	local lib=${OUTPUT_DIR}/${artifact}.a
+	c-archiver $lib $static_objects $dependencies
+}
+
+craven_build_headers(){
+	cp *.h $OUTPUT_DIR
+}
+
+craven_deploy(){
+	local group=$1
+        local version=$3
+        local artifact=$2
+        local dir="$C2_REPO/${group}/${artifact}/${version}"
+	craven_create_dir_if_not_exists "$dir"
+	for file in $OUTPUT_DIR/*.*; do
+		debug "Deploying $file"
+		cp "$file" "$dir"
+	done
+	print "Artifacts deployed to $dir"
+}
+
+# ----------------------------------------------------------------
+# goal: build
+# ----------------------------------------------------------------
+craven_config_libraries(){
+	echo -n "-L${DEPS_DIR}"
+	craven_read_section "DEPS" | cut -d ' ' -f 2 | sed 's/^lib//' | while read artifact; do
+		echo -n " -l$artifact"
+	done
+}
+
+# VARIABLES
+C2_REPO=${C2_REPO:-${HOME}/.c2}
+OUTPUT_DIR=${OUTPUT_DIR:-output}
+DEPS_DIR=${OUTPUT_DIR}/deps
+PROJECT_FILE=project.craven
+
+# MAIN
+craven_create_dir_if_not_exists $C2_REPO
+
+for arg in $@; do
+case $arg in
+	"deps" ) craven_copy_my_dependencies_to_outputdir ;;
+	"clean" ) craven_clean_env ;;
+	"build" )
+		craven_copy_my_dependencies_to_outputdir
+		craven_build_and_deploy
+	;;
+	"config-includes" ) echo "-I${DEPS_DIR}" ;;
+	"config-libs" ) craven_config_libraries ;;
+	*) print "Ignoring unknown parameter $arg" ;;
+esac
+done
